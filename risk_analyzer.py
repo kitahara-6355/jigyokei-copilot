@@ -2,105 +2,68 @@
 import google.generativeai as genai
 import json
 import textwrap
-import os  # osライブラリをインポート
-from dotenv import load_dotenv  # dotenvライブラリをインポート
 
-# --- ▼▼▼ 認証部分を全面的に修正 ▼▼▼ ---
-# .envファイルから環境変数を読み込む
-load_dotenv()
+def map_risk_to_solution(risk_summary: str) -> str:
+    """単一のリスク概要文を受け取り、最適な解決策を返すことに特化したAI。"""
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    prompt = textwrap.dedent(f"""
+        あなたは商工会の共済制度に詳しい専門家です。
+        以下に提示される単一の「経営リスク」の概要文を読み、リストの中から最も適切な「解決策」を一つだけ選んで、その名称のみを返答してください。
 
-# 環境変数からAPIキーを取得して設定
-api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    raise ValueError("APIキーが.envファイルに設定されていません。")
-genai.configure(api_key=api_key)
-# --- ▲▲▲ 認証部分を全面的に修正 ▲▲▲ ---
-
+        # 解決策リスト
+        - "商工会の福祉共済, 経営者休業補償制度": 経営者や従業員の病気・ケガによる休業や所得減少を補償する。
+        - "業務災害保険": 従業員の労働災害（労災）に対する企業の賠償責任を補償する。
+        - "火災共済（店舗・設備補償）": 火災や水災による建物や設備の損害を補償する。
+        - "ビジネス総合保険（PL責任補償）": 食中毒などの賠償責任に加え、サイバー攻撃による損害なども幅広く補償する。
+        - "経営セーフティ共済": 取引先の倒産による売掛金回収不能などの損害に備える。
+        - "地震保険, 地震特約": 地震による損害を補償する。
+        - "個別相談": 上記のいずれにも明確に当てはまらない場合。
+        
+        # 入力される経営リスク
+        {risk_summary}
+        
+        # 出力（解決策の名称のみを記述すること）
+        """)
+    response = model.generate_content(prompt)
+    return response.text.strip()
 
 def analyze_conversation_for_risks(conversation_log: str) -> dict:
-    """
-    会話ログを分析し、経営リスクをJSON形式で抽出する思考エンジン。
-
-    Args:
-        conversation_log: 分析対象の会話ログテキスト。
-
-    Returns:
-        抽出されたリスク情報を含む辞書（JSONオブジェクト）。
-    """
-    
-    # Gemini AIモデルを初期化（★ここを最新モデル名に変更★）
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
-
-    # AIへの指示書（プロンプト）。f-string方式に変更し、JSONの{}を{{}}にエスケープ
-    prompt = textwrap.dedent(f"""
-        あなたは商工会に所属する、経験豊富な中小企業向けのリスクコンサルタントです。
-        以下の制約条件と出力フォーマットに従って、入力された会話ログから事業継続を脅かす可能性のある「経営リスク」を抽出してください。
-
-        # 制約条件
-        - 会話の中から、ヒト・モノ・カネ・情報・賠償責任など、経営に関するリスクのみを抽出する。
-        - 抽出したリスクは、簡潔な一行で表現する。
-        - 経営者の発言（トリガーフレーズ）を特定し、併記する。
-        - 会話ログにないリスクは絶対に捏造しないこと。
+    """【ステップ1】リスク抽出AI、【ステップ2】解決策マッピングAIを順に実行する。"""
+    # --- ステップ1：リスク抽出AIの実行 ---
+    risk_extraction_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    risk_extraction_prompt = textwrap.dedent(f"""
+        あなたは聞き上手なリスクコンサルタントです。
+        以下の会話ログから、事業継続を脅かす可能性のある「経営リスク」を抽出し、指定されたJSONフォーマットで出力してください。
+        解決策の提案は不要です。リスクの客観的な抽出に集中してください。
 
         # 出力フォーマット（必ずこのJSON形式に従うこと）
         ```json
         {{
           "risks": [
             {{
-              "risk_category": "（例：モノ）",
-              "risk_summary": "（例：厨房の火災による店舗・設備の焼失リスク）",
-              "trigger_phrase": "（例：火事が一番怖いね）"
+              "risk_category": "（リスクの分類）",
+              "risk_summary": "（抽出したリスクの概要）",
+              "trigger_phrase": "（きっかけとなった経営者の発言）"
             }}
           ]
         }}
         ```
-
         # 入力：会話ログ
         {conversation_log}
         """)
-    
-    # AIに、組み立てた指示書（f-stringで完成済み）を渡して分析を依頼
-    response = model.generate_content(prompt)
-    
+    response = risk_extraction_model.generate_content(risk_extraction_prompt)
     try:
-        # AIの返答からJSON部分のみを抽出
         json_text = response.text.strip().replace('```json', '').replace('```', '')
-        # JSON文字列をPythonの辞書オブジェクトに変換
-        extracted_risks = json.loads(json_text)
-        return extracted_risks
+        analysis_result = json.loads(json_text)
     except (json.JSONDecodeError, AttributeError) as e:
-        print(f"❌ AIの応答からJSONを解析中にエラーが発生しました: {e}")
-        print(f"AIの生テキスト応答: {response.text}")
+        print(f"❌ リスク抽出AIの応答解析中にエラー: {e}")
         return {{"risks": []}}
 
-
-# --- ここからがプログラムの実行部分 ---
-if __name__ == "__main__":
-
-    # サンプルとなる会話ログ（〇〇キッチン編）
-    conversation_log = """
-    職員：社長、お店の心配事を色々お聞きしましたが、社長ご自身のことについてはいかがでしょう？もし、社長が病気やケガで1ヶ月お店に立てなくなったら…？
-    社長：考えたくないけど、俺が倒れたら、この店は終わりだよ。レシピも仕入れも、全部俺の頭の中にあるからな…。
-    職員：なるほど、社長への依存度が非常に高い状態なのですね。
-    社長：あと、怖いのは設備だけじゃない。うちは火を使う商'便だから、やっぱり火事が一番怖いね。
-    職員：火災は飲食店にとって最大のリスクの一つですね。
-    社長：それと、食中毒かな。万が一うちの店から出してしまったら、もう信用はガタ落ちで、店を続けられないかもしれない。
-    """
-
-    print("--- 会話ログの分析を開始します ---")
-
-    # 思考エンジンを呼び出し
-    analysis_result = analyze_conversation_for_risks(conversation_log)
-
-    print("\n--- ✅ AIによるリスク分析結果（JSON形式） ---")
-    # 結果をきれいに整形して表示
-    print(json.dumps(analysis_result, indent=2, ensure_ascii=False))
-
-    print("\n--- リスク一覧 ---")
-    if analysis_result and analysis_result.get("risks"):
-        for i, risk in enumerate(analysis_result["risks"]):
-            print(f"{i+1}. カテゴリ：{risk.get('risk_category')}")
-            print(f"   リスク内容：{risk.get('risk_summary')}")
-            print(f"   発言トリガー：'{risk.get('trigger_phrase')}'\n")
-    else:
-        print("リスクは検出されませんでした。")
+    # --- ステップ2：抽出した各リスクに解決策をマッピング ---
+    if analysis_result.get("risks"):
+        for risk in analysis_result["risks"]:
+            risk_summary = risk.get("risk_summary")
+            if risk_summary:
+                solution = map_risk_to_solution(risk_summary)
+                risk["recommended_solution"] = solution
+    return analysis_result
