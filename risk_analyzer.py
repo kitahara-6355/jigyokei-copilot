@@ -2,8 +2,23 @@
 import google.generativeai as genai
 import json
 import textwrap
+import os  # osライブラリをインポート
+from dotenv import load_dotenv  # dotenvライブラリをインポート
+
+# --- ▼▼▼ 認証部分を全面的に修正 ▼▼▼ ---
+# .envファイルから環境変数を読み込む
+load_dotenv()
+
+# 環境変数からAPIキーを取得して設定
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    raise ValueError("APIキーが.envファイルに設定されていません。")
+genai.configure(api_key=api_key)
+# --- ▲▲▲ 認証部分を全面的に修正 ▲▲▲ ---
+
 
 def analyze_conversation_for_risks(conversation_log: str) -> dict:
+    # ...（これ以降の関数の内容は変更なし）
     """
     会話ログを分析し、経営リスクをJSON形式で抽出する思考エンジン。
 
