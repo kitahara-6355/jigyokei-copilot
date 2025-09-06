@@ -5,17 +5,16 @@ import uvicorn
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
+# --- ▼▼▼ CORS設定のために追加 ▼▼▼ ---
+from fastapi.middleware.cors import CORSMiddleware
+# --- ▲▲▲ ---
 
-# --- ▼▼▼ ここに認証処理を追加 ▼▼▼ ---
-# .envファイルから環境変数を読み込む
+# --- 認証処理 ---
 load_dotenv()
-
-# 環境変数からAPIキーを取得して設定
 api_key = os.getenv("GOOGLE_API_KEY")
 if not api_key:
     raise ValueError("APIキーが.envファイルに設定されていません。")
 genai.configure(api_key=api_key)
-# --- ▲▲▲ 認証処理はここまで ▲▲▲ ---
 
 # 思考エンジンと表示エンジンをインポート
 from risk_analyzer import analyze_conversation_for_risks
@@ -23,6 +22,20 @@ from presentation_generator import create_risk_list_presentation, create_solutio
 
 # FastAPIアプリケーションを初期化
 app = FastAPI()
+
+# --- ▼▼▼ CORS設定を追加 ▼▼▼ ---
+# 許可するオリジン（アクセス元）のリスト。"*"はすべてを許可（開発時に便利）
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # すべてのHTTPメソッドを許可
+    allow_headers=["*"], # すべてのHTTPヘッダーを許可
+)
+# --- ▲▲▲ ---
+
 
 # --- APIが受け取るデータの型を定義 ---
 class ConversationRequest(BaseModel):
