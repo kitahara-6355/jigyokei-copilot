@@ -13,12 +13,12 @@ def analyze_conversation_for_risks(conversation_log: str) -> dict:
     Returns:
         抽出されたリスク情報を含む辞書（JSONオブジェクト）。
     """
-
+    
     # Gemini AIモデルを初期化
     model = genai.GenerativeModel('gemini-pro')
 
-    # AIへの指示書（プロンプト）。AIの思考を制御する最も重要な部分。
-    prompt = textwrap.dedent("""
+    # AIへの指示書（プロンプト）。f-string方式に変更し、JSONの{}を{{}}にエスケープ
+    prompt = textwrap.dedent(f"""
         あなたは商工会に所属する、経験豊富な中小企業向けのリスクコンサルタントです。
         以下の制約条件と出力フォーマットに従って、入力された会話ログから事業継続を脅かす可能性のある「経営リスク」を抽出してください。
 
@@ -30,24 +30,24 @@ def analyze_conversation_for_risks(conversation_log: str) -> dict:
 
         # 出力フォーマット（必ずこのJSON形式に従うこと）
         ```json
-        {
+        {{
           "risks": [
-            {
+            {{
               "risk_category": "（例：モノ）",
               "risk_summary": "（例：厨房の火災による店舗・設備の焼失リスク）",
               "trigger_phrase": "（例：火事が一番怖いね）"
-            }
+            }}
           ]
-        }
+        }}
         ```
 
         # 入力：会話ログ
         {conversation_log}
         """)
-
-    # AIに、組み立てた指示書と会話ログを渡して分析を依頼
-    response = model.generate_content(prompt.format(conversation_log=conversation_log))
-
+    
+    # AIに、組み立てた指示書（f-stringで完成済み）を渡して分析を依頼
+    response = model.generate_content(prompt)
+    
     try:
         # AIの返答からJSON部分のみを抽出
         json_text = response.text.strip().replace('```json', '').replace('```', '')
@@ -57,7 +57,7 @@ def analyze_conversation_for_risks(conversation_log: str) -> dict:
     except (json.JSONDecodeError, AttributeError) as e:
         print(f"❌ AIの応答からJSONを解析中にエラーが発生しました: {e}")
         print(f"AIの生テキスト応答: {response.text}")
-        return {"risks": []}
+        return {{"risks": []}}
 
 
 # --- ここからがプログラムの実行部分 ---
