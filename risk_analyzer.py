@@ -18,7 +18,6 @@ genai.configure(api_key=api_key)
 
 
 def analyze_conversation_for_risks(conversation_log: str) -> dict:
-    # ...（これ以降の関数の内容は変更なし）
     """
     会話ログを分析し、経営リスクをJSON形式で抽出する思考エンジン。
 
@@ -29,8 +28,8 @@ def analyze_conversation_for_risks(conversation_log: str) -> dict:
         抽出されたリスク情報を含む辞書（JSONオブジェクト）。
     """
     
-    # Gemini AIモデルを初期化
-    model = genai.GenerativeModel('gemini-pro')
+    # Gemini AIモデルを初期化（★ここを最新モデル名に変更★）
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     # AIへの指示書（プロンプト）。f-string方式に変更し、JSONの{}を{{}}にエスケープ
     prompt = textwrap.dedent(f"""
