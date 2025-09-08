@@ -1,52 +1,100 @@
 # -*- coding: utf-8 -*-
+from fastapi import FastAPI
+from pydantic import BaseModel
 import os
-from dotenv import load_dotenv
 import google.generativeai as genai
+from fastapi.middleware.cors import CORSMiddleware
+import json
+import textwrap
 
 # --- 認証処理 ---
-load_dotenv()
+# Cloud Runの環境変数からAPIキーを読み込みます
 api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    raise ValueError("APIキーが.envファイルに設定されていません。")
-genai.configure(api_key=api_key)
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    print("警告: 環境変数 GOOGLE_API_KEY が設定されていません。")
 
-# --- 部品のインポート ---
-from risk_analyzer import analyze_conversation_for_risks
-from presentation_generator import create_risk_list_presentation, create_solution_presentation
+# --- FastAPIアプリケーションを初期化 ---
+app = FastAPI()
+origins = ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def get_multiline_input():
-    """ユーザーから複数行の入力を受け取る関数"""
-    print("会話ログをペーストしてください（最後に'analyze'と入力してEnterを押すと分析を開始します）:")
-    lines = []
-    while True:
-        line = input()
-        if line.strip().lower() == 'analyze':
-            break
-        lines.append(line)
-    return "\n".join(lines)
+# --- AI思考エンジンの機能 ---
+def map_risk_to_solution(risk_summary: str) -> str:
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    prompt = textwrap.dedent(f"""
+        あなたは商工会の共済制度に詳しい専門家です。
+        以下に提示される単一の「経営リスク」の概要文を読み、リストの中から最も適切な「解決策」を一つだけ選んで、その名称のみを返答してください。
+        # 解決策リスト
+        - "商工会の福祉共済, 経営者休業補償制度": 経営者や従業員の病気・ケガによる休業や所得減少を補償する。
+        - "業務災害保険": 従業員の労働災害（労災）に対する企業の賠償責任を補償する。
+        - "火災共済（店舗・設備補償）": 火災や水災による建物や設備の損害を補償する。
+        - "ビジネス総合保険（PL責任補償）": 食中毒などの賠償責任に加え、サイバー攻撃による損害なども幅広く補償する。
+        - "経営セーフティ共済": 取引先の倒産による売掛金回収不能などの損害に備える。
+        - "地震保険, 地震特約": 地震による損害を補償する。
+        - "個別相談": 上記のいずれにも明確に当てはまらない場合。
+        # 入力される経営リスク
+        {risk_summary}
+        # 出力（解決策の名称のみを記述すること）
+        """)
+    response = model.generate_content(prompt)
+    return response.text.strip()
 
-def run_jigyokei_session(conversation_log: str):
-    """単一の会話セッションを実行し、分析からプレゼンテーション生成までを行う。"""
-    print("\n--- フェーズ1：AIによる会話分析を開始します ---")
-    analysis_result = analyze_conversation_for_risks(conversation_log)
+def analyze_conversation_for_risks(conversation_log: str) -> dict:
+    risk_extraction_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    risk_extraction_prompt = textwrap.dedent(f"""
+        あなたは聞き上手なリスクコンサルタントです。
+        以下の会話ログから、事業継続を脅かす可能性のある「経営リスク」を抽出し、指定されたJSONフォーマットで出力してください。
+        # 出力フォーマット（必ずこのJSON形式に従うこと）
+        ```json
+        {{
+          "risks": [
+            {{
+              "risk_category": "（リスクの分類）",
+              "risk_summary": "（抽出したリスクの概要）",
+              "trigger_phrase": "（きっかけとなった経営者の発言）"
+            }}
+          ]
+        }}
+        ```
+        # 入力：会話ログ
+        {conversation_log}
+        """)
+    response = risk_extraction_model.generate_content(risk_extraction_prompt)
+    try:
+        json_text = response.text.strip().replace('```json', '').replace('```', '')
+        analysis_result = json.loads(json_text)
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"❌ リスク抽出AIの応答解析中にエラー: {e}")
+        return {{"risks": []}}
+
+    if analysis_result.get("risks"):
+        for risk in analysis_result["risks"]:
+            risk_summary = risk.get("risk_summary")
+            if risk_summary:
+                solution = map_risk_to_solution(risk_summary)
+                risk["recommended_solution"] = solution
+    return analysis_result
+
+# --- APIの受付窓口の定義 ---
+class ConversationRequest(BaseModel):
+    conversation_log: str
+
+@app.post("/")
+def analyze_endpoint(request: ConversationRequest):
+    if not genai.get_key():
+        return {{"error": "APIキーが設定されていません。Cloud Runの環境変数を確認してください。"}}
+    
+    analysis_result = analyze_conversation_for_risks(request.conversation_log)
     
     if not analysis_result or not analysis_result.get("risks"):
-        print("分析の結果、リスクは検出されませんでした。セッションを終了します。")
-        return
-        
-    print("--- 分析完了。フェーズ2：プレゼンテーションを生成します ---\n")
+        return {{"error": "リスクは検出されませんでした。"}}
     
-    risk_presentation = create_risk_list_presentation(analysis_result)
-    print(risk_presentation)
-
-    print("\n----------------------------------------\n")
-    solution_presentation = create_solution_presentation(analysis_result)
-    print(solution_presentation)
-
-# --- プログラムの実行部分 ---
-if __name__ == "__main__":
-    conversation_log_input = get_multiline_input()
-    if conversation_log_input:
-        run_jigyokei_session(conversation_log_input)
-    else:
-        print("会話ログが入力されませんでした。")
+    return { "raw_analysis": analysis_result }
