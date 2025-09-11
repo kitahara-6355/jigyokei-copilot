@@ -6,13 +6,26 @@ import google.generativeai as genai
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import textwrap
+# --- ▼▼▼ Pub/Subのために追加 ▼▼▼ ---
+from google.cloud import pubsub_v1
 
-# --- 認証処理 ---
+# --- 認証とPub/Subクライアントの初期化 ---
 api_key = os.getenv("GOOGLE_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 else:
     print("警告: 環境変数 GOOGLE_API_KEY が設定されていません。")
+
+# --- ▼▼▼ Pub/Subのために追加 ▼▼▼ ---
+publisher = pubsub_v1.PublisherClient()
+project_id = os.getenv("GCP_PROJECT") # Cloud Runが自動で設定する環境変数
+topic_name = "jigyokei-analysis-completed"
+if project_id:
+    topic_path = publisher.topic_path(project_id, topic_name)
+else:
+    topic_path = None
+    print("警告: 環境変数 GCP_PROJECT が見つかりません。Pub/Subへの送信は無効になります。")
+# --- ▲▲▲ ---
 
 # --- FastAPIアプリケーションを初期化 ---
 app = FastAPI()
@@ -26,7 +39,7 @@ app.add_middleware(
 )
 
 # --- AI思考エンジンの機能 ---
-# (以前提供した、analyze_conversation_for_risks と map_risk_to_solution 関数をここに含める)
+# (analyze_conversation_for_risks と map_risk_to_solution 関数は変更なし)
 def map_risk_to_solution(risk_summary: str) -> str:
     model = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt = textwrap.dedent(f"""
@@ -96,5 +109,20 @@ def analyze_endpoint(request: ConversationRequest):
 
     if not analysis_result or not analysis_result.get("risks"):
         return {{"error": "リスクは検出されませんでした。"}}
+
+    # --- ▼▼▼ Pub/Subへの通知処理を追加 ▼▼▼ ---
+    if topic_path:
+        try:
+            message_data = {
+                "conversation_log": request.conversation_log,
+                "analysis_result": analysis_result
+            }
+            data = json.dumps(message_data).encode("utf-8")
+            future = publisher.publish(topic_path, data)
+            future.result()
+            print(f"✅ Pub/Subにメッセージを送信しました: {topic_path}")
+        except Exception as e:
+            print(f"❌ Pub/Subへのメッセージ送信に失敗しました: {e}")
+    # --- ▲▲▲ ---
 
     return { "raw_analysis": analysis_result }
